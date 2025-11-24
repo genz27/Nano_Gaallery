@@ -38,22 +38,22 @@ async function handleGenerateRequest(request, env) {
   }
 
   try {
-    const { model, prompt, imageBase64, mimeType, aspectRatio, imageSize } = await request.json();
+    // 接收 images 数组，代替之前的单个 imageBase64
+    const { model, prompt, images, aspectRatio, imageSize } = await request.json();
 
-    // 构建 Google API URL
-    // 使用 v1beta 版本以支持最新的模型特性
     const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${env.GEMINI_API_KEY}`;
 
-    // 构建请求体 (Payload)
     const parts = [];
     
-    // 1. 放入图片 (如果有)
-    if (imageBase64) {
-      parts.push({
-        inlineData: {
-          mimeType: mimeType || 'image/jpeg',
-          data: imageBase64
-        }
+    // 1. 放入多张参考图 (如果有)
+    if (images && Array.isArray(images)) {
+      images.forEach(img => {
+        parts.push({
+          inlineData: {
+            mimeType: img.mimeType || 'image/jpeg',
+            data: img.data // Base64 string
+          }
+        });
       });
     }
 
@@ -63,49 +63,21 @@ async function handleGenerateRequest(request, env) {
     }
 
     // 3. 构建配置参数
-    // 注意：REST API 的结构与 SDK 略有不同，需要根据文档构建 generationConfig
     const generationConfig = {
-      // 这里的 imageConfig 结构参考了 Gemini API 对 Imagen/Nano 的定义
-      // 某些模型可能需要特定的参数位置，这里使用了通用的 generationConfig 嵌套
-    };
-
-    // 构建特定的 Image Config
-    // 对于 gemini-3-pro-image-preview 和 gemini-2.5-flash-image
-    // imageConfig 通常作为 generationConfig 的一部分
-    const imageConfig = {
-      aspectRatio: aspectRatio || '1:1'
+      imageConfig: {
+        aspectRatio: aspectRatio || '1:1'
+      }
     };
 
     if (model === 'gemini-3-pro-image-preview' && imageSize) {
-      // 只有 Pro 模型支持 imageSize
-      // 注意：API 期望的可能是 "1024x1024" 这种格式，或者枚举 "1K", "2K"
-      // 根据最新的 REST API spec，对于 Gemini 3 Pro Image，参数通常是：
-      // config: { imageConfig: { imageSize: '1K' } }
-      imageConfig.imageSize = imageSize; 
+      generationConfig.imageConfig.imageSize = imageSize; 
     }
-
-    // 将 imageConfig 加入 generationConfig
-    // 注意：如果是 SDK，是 config.imageConfig。REST API 中是 generationConfig
-    // 但对于某些特定的新模型，可能直接在顶层或 generationConfig 内部有所不同。
-    // 这里采用最通用的做法：放入 generationConfig
-    // 如果模型不识别，通常会忽略或报错
-    // 对于 Nano/Pro Image 模型，REST API body 结构通常如下：
-    /*
-      {
-        "contents": [...],
-        "generationConfig": {
-           "imageConfig": { ... }
-        }
-      }
-    */
-    generationConfig.imageConfig = imageConfig;
 
     const payload = {
       contents: [{ parts }],
       generationConfig: generationConfig
     };
 
-    // 发起请求
     const googleResponse = await fetch(apiUrl, {
       method: 'POST',
       headers: {
@@ -116,12 +88,17 @@ async function handleGenerateRequest(request, env) {
 
     if (!googleResponse.ok) {
       const errorText = await googleResponse.text();
-      throw new Error(`Google API Error (${googleResponse.status}): ${errorText}`);
+      // 尝试解析错误JSON以获得更好的提示
+      try {
+        const errJson = JSON.parse(errorText);
+        throw new Error(errJson.error?.message || errorText);
+      } catch (e) {
+        throw new Error(`Google API Error (${googleResponse.status}): ${errorText}`);
+      }
     }
 
     const data = await googleResponse.json();
 
-    // 解析返回结果，提取图片
     const generatedImages = [];
     
     if (data.candidates && data.candidates[0].content && data.candidates[0].content.parts) {
@@ -134,7 +111,6 @@ async function handleGenerateRequest(request, env) {
     }
 
     if (generatedImages.length === 0) {
-        // 尝试查找文本错误信息（例如安全拦截）
         const textPart = data.candidates?.[0]?.content?.parts?.find(p => p.text);
         if (textPart) {
             throw new Error(`生成失败: ${textPart.text}`);
@@ -156,8 +132,6 @@ async function handleGenerateRequest(request, env) {
 
 /**
  * 前端 HTML 代码
- * 包含了 React, Tailwind, Lucide Icons 和应用逻辑
- * 使用 Babel Standalone 在浏览器端编译 JSX (为了保持单文件部署的便捷性)
  */
 const HTML_CONTENT = `
 <!DOCTYPE html>
@@ -187,15 +161,67 @@ const HTML_CONTENT = `
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect } = React;
+        const { useState, useEffect, useRef } = React;
 
-        // Model Definitions
+        // --- IndexedDB Manager for History ---
+        const DB_NAME = 'GeminiGalleryDB';
+        const DB_VERSION = 1;
+        const STORE_NAME = 'images';
+
+        const dbHelper = {
+          open: () => {
+            return new Promise((resolve, reject) => {
+              const request = indexedDB.open(DB_NAME, DB_VERSION);
+              request.onupgradeneeded = (event) => {
+                const db = event.target.result;
+                if (!db.objectStoreNames.contains(STORE_NAME)) {
+                  db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+                }
+              };
+              request.onsuccess = (event) => resolve(event.target.result);
+              request.onerror = (event) => reject(event.target.error);
+            });
+          },
+          add: async (image) => {
+            const db = await dbHelper.open();
+            return new Promise((resolve, reject) => {
+              const tx = db.transaction(STORE_NAME, 'readwrite');
+              const store = tx.objectStore(STORE_NAME);
+              const req = store.add(image);
+              req.onsuccess = () => resolve(true);
+              req.onerror = () => reject(req.error);
+            });
+          },
+          getAll: async () => {
+            const db = await dbHelper.open();
+            return new Promise((resolve, reject) => {
+              const tx = db.transaction(STORE_NAME, 'readonly');
+              const store = tx.objectStore(STORE_NAME);
+              // Use a cursor or getAll to get items. Sorted by newest first would require an index or manual sort.
+              const req = store.getAll();
+              req.onsuccess = () => resolve(req.result.reverse()); // simple reverse for newest first
+              req.onerror = () => reject(req.error);
+            });
+          },
+          clear: async () => {
+             const db = await dbHelper.open();
+             return new Promise((resolve, reject) => {
+               const tx = db.transaction(STORE_NAME, 'readwrite');
+               const store = tx.objectStore(STORE_NAME);
+               const req = store.clear();
+               req.onsuccess = () => resolve(true);
+               req.onerror = () => reject(req.error);
+             });
+          }
+        };
+
+        // --- Constants & Icons ---
         const MODELS = {
             NANO: 'gemini-2.5-flash-image',
             NANO_PRO: 'gemini-3-pro-image-preview'
         };
 
-        // Icons (Lucide implementation for React via SVG directly to avoid heavy library import issues in standalone)
+        // Simplified SVG Icons
         const Icons = {
             Aperture: (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="14.31" x2="20.05" y1="8" y2="17.94"/><line x1="9.69" x2="21.17" y1="8" y2="8"/><line x1="7.38" x2="14.69" y1="12" y2="2.06"/><line x1="9.69" x2="3.95" y1="16" y2="6.06"/><line x1="14.31" x2="2.83" y1="16" y2="16"/><line x1="16.62" x2="9.31" y1="12" y2="21.94"/></svg>,
             Wand2: (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72Z"/><path d="m14 7 3 3"/><path d="M5 6v4"/><path d="M19 14v4"/><path d="M10 2v2"/><path d="M7 8H3"/><path d="M21 16h-4"/><path d="M11 3H9"/></svg>,
@@ -205,16 +231,15 @@ const HTML_CONTENT = `
             Loader2: (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>,
             Upload: (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>,
             Maximize: (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>,
-            AlertCircle: (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
+            AlertCircle: (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>,
+            X: (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 18 18"/></svg>
         };
 
-        // File helper
         const fileToBase64 = (file) => {
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();
                 reader.onload = () => {
                    const result = reader.result;
-                   // remove data:image/xxx;base64, prefix
                    const base64 = result.split(',')[1];
                    resolve(base64);
                 };
@@ -228,25 +253,52 @@ const HTML_CONTENT = `
             const [model, setModel] = useState(MODELS.NANO);
             const [aspectRatio, setAspectRatio] = useState('1:1');
             const [imageSize, setImageSize] = useState('1K');
-            const [referenceImage, setReferenceImage] = useState(null);
+            // Changed: Support multiple files
+            const [referenceImages, setReferenceImages] = useState([]);
             const [loading, setLoading] = useState(false);
             const [history, setHistory] = useState([]);
             const [error, setError] = useState(null);
 
+            // Load history from IndexedDB on mount
+            useEffect(() => {
+                const loadHistory = async () => {
+                    try {
+                        const saved = await dbHelper.getAll();
+                        setHistory(saved);
+                    } catch (e) {
+                        console.error("Failed to load history", e);
+                    }
+                };
+                loadHistory();
+            }, []);
+
             const handleImageUpload = (e) => {
-                if (e.target.files && e.target.files[0]) {
-                    setReferenceImage(e.target.files[0]);
+                if (e.target.files && e.target.files.length > 0) {
+                    // Append new files to existing ones
+                    const newFiles = Array.from(e.target.files);
+                    setReferenceImages(prev => [...prev, ...newFiles]);
+                }
+                // Reset input value to allow selecting the same file again if needed
+                e.target.value = '';
+            };
+
+            const removeReferenceImage = (index) => {
+                setReferenceImages(prev => prev.filter((_, i) => i !== index));
+            };
+
+            const clearAllReferenceImages = () => {
+                setReferenceImages([]);
+            };
+
+            const clearHistory = async () => {
+                if (confirm('确定要清空所有历史记录吗？此操作无法撤销。')) {
+                    await dbHelper.clear();
+                    setHistory([]);
                 }
             };
 
-            const clearReferenceImage = () => {
-                setReferenceImage(null);
-                const fileInput = document.getElementById('file-upload');
-                if (fileInput) fileInput.value = '';
-            };
-
             const handleGenerate = async () => {
-                if (!prompt.trim() && !referenceImage) {
+                if (!prompt.trim() && referenceImages.length === 0) {
                     setError("请输入提示词或上传参考图片");
                     return;
                 }
@@ -255,20 +307,19 @@ const HTML_CONTENT = `
                 setError(null);
 
                 try {
-                    let imageBase64 = null;
-                    if (referenceImage) {
-                        imageBase64 = await fileToBase64(referenceImage);
-                    }
+                    // Convert all images to Base64
+                    const imagesPayload = await Promise.all(referenceImages.map(async (file) => ({
+                        data: await fileToBase64(file),
+                        mimeType: file.type
+                    })));
 
-                    // Call the Worker API (Server-side)
                     const response = await fetch('/api/generate', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             model,
-                            prompt: prompt || (referenceImage ? "Describe this image and modify it" : ""),
-                            imageBase64,
-                            mimeType: referenceImage?.type,
+                            prompt: prompt || (referenceImages.length > 0 ? "Describe these images and modify them" : ""),
+                            images: imagesPayload, // Send array
                             aspectRatio,
                             imageSize
                         })
@@ -281,14 +332,21 @@ const HTML_CONTENT = `
                     }
 
                     const urls = data.images;
+                    const timestamp = Date.now();
+                    
                     const newImages = urls.map(url => ({
                         id: crypto.randomUUID(),
                         url,
                         prompt,
                         model: model === MODELS.NANO_PRO ? 'Nano Pro' : 'Nano',
-                        timestamp: Date.now()
+                        timestamp
                     }));
 
+                    // Save to DB and update State
+                    for (const img of newImages) {
+                        await dbHelper.add(img);
+                    }
+                    
                     setHistory(prev => [...newImages, ...prev]);
 
                 } catch (err) {
@@ -302,7 +360,7 @@ const HTML_CONTENT = `
             const downloadImage = (url, id) => {
                 const link = document.createElement('a');
                 link.href = url;
-                link.download = \`gemini-\${id}.png\`;
+                link.download = `gemini-${id}.png`;
                 document.body.appendChild(link);
                 link.click();
                 document.body.removeChild(link);
@@ -335,23 +393,23 @@ const HTML_CONTENT = `
                                     <div className="grid grid-cols-2 gap-0 border-2 border-black bg-white">
                                         <button
                                             onClick={() => setModel(MODELS.NANO)}
-                                            className={\`py-4 px-4 text-left transition-colors relative border-r-2 border-black \${
+                                            className={`py-4 px-4 text-left transition-colors relative border-r-2 border-black ${
                                                 model === MODELS.NANO ? 'bg-black text-white' : 'bg-white text-black hover:bg-zinc-100'
-                                            }\`}
+                                            }`}
                                         >
                                             <div className="text-sm font-bold">Nano (Flash)</div>
-                                            <div className={\`text-[10px] mt-1 font-medium \${model === MODELS.NANO ? 'text-zinc-400' : 'text-zinc-500'}\`}>
+                                            <div className={`text-[10px] mt-1 font-medium ${model === MODELS.NANO ? 'text-zinc-400' : 'text-zinc-500'}`}>
                                                 极速 / 基础画质
                                             </div>
                                         </button>
                                         <button
                                             onClick={() => setModel(MODELS.NANO_PRO)}
-                                            className={\`py-4 px-4 text-left transition-colors relative \${
+                                            className={`py-4 px-4 text-left transition-colors relative ${
                                                 model === MODELS.NANO_PRO ? 'bg-black text-white' : 'bg-white text-black hover:bg-zinc-100'
-                                            }\`}
+                                            }`}
                                         >
                                             <div className="text-sm font-bold">Nano Pro</div>
-                                            <div className={\`text-[10px] mt-1 font-medium \${model === MODELS.NANO_PRO ? 'text-zinc-400' : 'text-zinc-500'}\`}>
+                                            <div className={`text-[10px] mt-1 font-medium ${model === MODELS.NANO_PRO ? 'text-zinc-400' : 'text-zinc-500'}`}>
                                                 Pro / 4K / 高细节
                                             </div>
                                         </button>
@@ -359,7 +417,7 @@ const HTML_CONTENT = `
                                 </div>
 
                                 {/* Resolution Settings (Pro Only) */}
-                                <div className={\`transition-all duration-300 \${model !== MODELS.NANO_PRO ? 'opacity-30 pointer-events-none grayscale' : ''}\`}>
+                                <div className={`transition-all duration-300 ${model !== MODELS.NANO_PRO ? 'opacity-30 pointer-events-none grayscale' : ''}`}>
                                    <label className="text-xs font-bold uppercase tracking-widest mb-3 block flex items-center gap-2">
                                      <Icons.Maximize className="w-3 h-3" /> 分辨率 (仅 Pro 模型)
                                    </label>
@@ -368,11 +426,11 @@ const HTML_CONTENT = `
                                        <button
                                          key={size}
                                          onClick={() => setImageSize(size)}
-                                         className={\`flex-1 py-3 text-sm font-bold transition-colors \${
+                                         className={`flex-1 py-3 text-sm font-bold transition-colors ${
                                            imageSize === size && model === MODELS.NANO_PRO
                                            ? 'bg-black text-white'
                                            : 'bg-white text-black hover:bg-zinc-100'
-                                         }\`}
+                                         }`}
                                        >
                                          {size}
                                        </button>
@@ -388,11 +446,11 @@ const HTML_CONTENT = `
                                        <button
                                          key={ratio}
                                          onClick={() => setAspectRatio(ratio)}
-                                         className={\`py-2 text-xs font-bold border-2 transition-all \${
+                                         className={`py-2 text-xs font-bold border-2 transition-all ${
                                            aspectRatio === ratio
                                            ? 'bg-black text-white border-black'
                                            : 'bg-white text-black border-zinc-200 hover:border-black'
-                                         }\`}
+                                         }`}
                                        >
                                          {ratio}
                                        </button>
@@ -400,44 +458,56 @@ const HTML_CONTENT = `
                                    </div>
                                 </div>
 
-                                {/* Reference Image Upload */}
+                                {/* Reference Images Upload (Multi) */}
                                 <div>
                                    <label className="text-xs font-bold uppercase tracking-widest mb-3 block flex justify-between items-center">
-                                     <span>参考图 (垫图/改图)</span>
-                                     {referenceImage && (
-                                       <button onClick={clearReferenceImage} className="text-black underline text-xs hover:no-underline flex items-center gap-1 font-bold">
-                                         <Icons.Trash2 className="w-3 h-3" /> 清除图片
+                                     <span>参考图 (垫图/多图)</span>
+                                     {referenceImages.length > 0 && (
+                                       <button onClick={clearAllReferenceImages} className="text-black underline text-xs hover:no-underline flex items-center gap-1 font-bold">
+                                         <Icons.Trash2 className="w-3 h-3" /> 全部清除
                                        </button>
                                      )}
                                    </label>
-                                   <div className="relative group">
-                                     <input 
-                                       id="file-upload"
-                                       type="file" 
-                                       accept="image/*" 
-                                       onChange={handleImageUpload}
-                                       className="hidden"
-                                     />
-                                     <label 
-                                       htmlFor="file-upload"
-                                       className={\`w-full h-32 flex flex-col items-center justify-center gap-2 border-2 border-dashed cursor-pointer transition-all \${
-                                         referenceImage 
-                                         ? 'border-black bg-zinc-50' 
-                                         : 'border-zinc-300 hover:border-black hover:bg-zinc-50'
-                                       }\`}
-                                     >
-                                       {referenceImage ? (
-                                          <div className="text-center px-4">
-                                            <Icons.Image className="w-6 h-6 mx-auto mb-2" />
-                                            <span className="block truncate max-w-[200px] text-xs font-bold">{referenceImage.name}</span>
-                                          </div>
-                                       ) : (
-                                          <>
+                                   
+                                   <div className="space-y-3">
+                                       <div className="relative group">
+                                         <input 
+                                           id="file-upload"
+                                           type="file" 
+                                           multiple
+                                           accept="image/*" 
+                                           onChange={handleImageUpload}
+                                           className="hidden"
+                                         />
+                                         <label 
+                                           htmlFor="file-upload"
+                                           className="w-full h-24 flex flex-col items-center justify-center gap-2 border-2 border-dashed cursor-pointer transition-all border-zinc-300 hover:border-black hover:bg-zinc-50"
+                                         >
                                             <Icons.Upload className="w-6 h-6 text-zinc-400 group-hover:text-black transition-colors" />
-                                            <span className="text-xs font-bold text-zinc-500 group-hover:text-black transition-colors">点击上传参考图片</span>
-                                          </>
+                                            <span className="text-xs font-bold text-zinc-500 group-hover:text-black transition-colors">点击添加图片 (支持多选)</span>
+                                         </label>
+                                       </div>
+
+                                       {/* Thumbnails List */}
+                                       {referenceImages.length > 0 && (
+                                         <div className="grid grid-cols-3 gap-2">
+                                           {referenceImages.map((file, idx) => (
+                                             <div key={idx} className="relative aspect-square border-2 border-black bg-zinc-100 group">
+                                               <img 
+                                                 src={URL.createObjectURL(file)} 
+                                                 className="w-full h-full object-cover" 
+                                                 onLoad={(e) => URL.revokeObjectURL(e.target.src)}
+                                               />
+                                               <button 
+                                                 onClick={() => removeReferenceImage(idx)}
+                                                 className="absolute top-1 right-1 bg-black text-white p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                                               >
+                                                 <Icons.X className="w-3 h-3" />
+                                               </button>
+                                             </div>
+                                           ))}
+                                         </div>
                                        )}
-                                     </label>
                                    </div>
                                 </div>
                             </div>
@@ -462,9 +532,9 @@ const HTML_CONTENT = `
                                 <button
                                   onClick={handleGenerate}
                                   disabled={loading}
-                                  className={\`w-full py-4 font-black text-sm uppercase tracking-widest flex items-center justify-center gap-2 transition-all border-2 border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none \${
+                                  className={`w-full py-4 font-black text-sm uppercase tracking-widest flex items-center justify-center gap-2 transition-all border-2 border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none ${
                                     loading ? 'bg-zinc-100 text-zinc-400 cursor-not-allowed shadow-none border-zinc-200 translate-x-[2px] translate-y-[2px]' : 'bg-black text-white hover:bg-zinc-800'
-                                  }\`}
+                                  }`}
                                 >
                                   {loading ? (
                                     <>
@@ -485,15 +555,20 @@ const HTML_CONTENT = `
                         <div className="flex-1 min-w-0">
                           <div className="mb-8 pb-4 border-b-2 border-black flex items-end justify-between">
                             <h2 className="text-4xl font-black uppercase tracking-tighter leading-none">Gallery</h2>
-                            <span className="text-xs font-mono font-bold border border-black px-2 py-1">
-                              {history.length.toString().padStart(2, '0')} IMAGES
-                            </span>
+                            <div className="flex gap-2 items-center">
+                                <button onClick={clearHistory} className="text-[10px] font-bold uppercase hover:underline text-zinc-500 mr-2">
+                                    清空历史
+                                </button>
+                                <span className="text-xs font-mono font-bold border border-black px-2 py-1">
+                                  {history.length.toString().padStart(2, '0')} IMAGES
+                                </span>
+                            </div>
                           </div>
 
                           {history.length === 0 ? (
                             <div className="h-[600px] flex flex-col items-center justify-center text-zinc-300 border-2 border-dashed border-zinc-200 bg-zinc-50/30">
                               <Icons.Sparkles className="w-16 h-16 mb-4 opacity-20 text-black" />
-                              <p className="font-bold text-zinc-400">在此处展示您的创作</p>
+                              <p className="font-bold text-zinc-400">在此处展示您的创作 (支持本地保存)</p>
                             </div>
                           ) : (
                             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-2 gap-8">
@@ -547,4 +622,3 @@ const HTML_CONTENT = `
     </script>
 </body>
 </html>
-`;
