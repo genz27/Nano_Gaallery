@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Wand2, 
   Image as ImageIcon, 
@@ -8,7 +8,8 @@ import {
   Upload,
   Aperture,
   Maximize,
-  AlertCircle
+  AlertCircle,
+  Key
 } from 'lucide-react';
 import { ModelId, AspectRatio, ImageSize, GeneratedImage } from './types';
 import { generateImageContent } from './services/geminiService';
@@ -23,6 +24,29 @@ const App: React.FC = () => {
   const [loading, setLoading] = useState<boolean>(false);
   const [history, setHistory] = useState<GeneratedImage[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [hasKey, setHasKey] = useState<boolean>(false);
+
+  useEffect(() => {
+    const checkKey = async () => {
+      if (window.aistudio && await window.aistudio.hasSelectedApiKey()) {
+        setHasKey(true);
+      } else if (!window.aistudio) {
+        // Fallback for environments without aistudio (e.g. local dev with .env)
+        // If process.env.API_KEY is present, we assume it's valid.
+        // However, standard flow requires selection. 
+        // We set true to allow usage if aistudio is missing, assuming env var.
+        setHasKey(true);
+      }
+    };
+    checkKey();
+  }, []);
+
+  const handleSelectKey = async () => {
+    if (window.aistudio) {
+      await window.aistudio.openSelectKey();
+      setHasKey(true);
+    }
+  };
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -64,7 +88,15 @@ const App: React.FC = () => {
 
       setHistory(prev => [...newImages, ...prev]);
     } catch (err: any) {
-      setError(err.message);
+      if (err.message && err.message.includes("Requested entity was not found")) {
+        setHasKey(false);
+        if (window.aistudio) {
+          await window.aistudio.openSelectKey();
+          setHasKey(true);
+        }
+      } else {
+        setError(err.message);
+      }
     } finally {
       setLoading(false);
     }
@@ -78,6 +110,32 @@ const App: React.FC = () => {
     link.click();
     document.body.removeChild(link);
   };
+
+  if (!hasKey && window.aistudio) {
+    return (
+      <div className="min-h-screen bg-white text-black font-sans flex flex-col items-center justify-center p-4">
+        <div className="max-w-md w-full text-center space-y-8">
+          <div className="w-16 h-16 bg-black text-white mx-auto flex items-center justify-center">
+            <Aperture className="w-8 h-8" />
+          </div>
+          <div className="space-y-4">
+             <h1 className="text-2xl font-black uppercase tracking-tighter">Gemini 绘图</h1>
+             <p className="text-sm font-medium text-zinc-500">
+               请先选择一个有效的 API Key 以继续使用。<br/>
+               (Select a paid API key to proceed)
+             </p>
+          </div>
+          <button
+            onClick={handleSelectKey}
+            className="w-full py-4 bg-black text-white font-black uppercase tracking-widest text-sm hover:bg-zinc-800 transition-colors flex items-center justify-center gap-2"
+          >
+            <Key className="w-4 h-4" />
+            选择 API Key
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-white text-black font-sans selection:bg-black selection:text-white">
