@@ -232,8 +232,7 @@ const HTML_CONTENT = `
             Upload: (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>,
             Maximize: (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>,
             AlertCircle: (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>,
-            X: (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 18 18"/></svg>,
-            Github: (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"/><path d="M9 18c-4.51 2-5-2-7-2"/></svg>
+            X: (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 18 18"/></svg>
         };
 
         const fileToBase64 = (file) => {
@@ -361,7 +360,7 @@ const HTML_CONTENT = `
             const downloadImage = (url, id) => {
                 const link = document.createElement('a');
                 link.href = url;
-                link.download = \`gemini-\${id}.png\`;
+                link.download = `gemini-${id}.png`;
                 document.body.appendChild(link);
                 link.click();
                 document.body.removeChild(link);
@@ -377,14 +376,8 @@ const HTML_CONTENT = `
                             </div>
                             <h1 className="text-xl font-black tracking-tighter uppercase">Gemini 绘图</h1>
                         </div>
-                        <div className="flex items-center gap-4">
-                            <a href="https://github.com/genz27/Nano_Gaallery" target="_blank" className="flex items-center gap-2 hover:opacity-70 transition-opacity">
-                                <Icons.Github className="w-5 h-5" />
-                                <span className="hidden md:inline text-xs font-bold uppercase">GitHub</span>
-                            </a>
-                            <div className="hidden md:block text-[10px] font-mono border border-black px-2 py-1 rounded-full font-bold uppercase">
-                                Worker Mode
-                            </div>
+                        <div className="hidden md:block text-[10px] font-mono border border-black px-2 py-1 rounded-full font-bold uppercase">
+                            Worker Mode
                         </div>
                     </header>
 
@@ -400,23 +393,23 @@ const HTML_CONTENT = `
                                     <div className="grid grid-cols-2 gap-0 border-2 border-black bg-white">
                                         <button
                                             onClick={() => setModel(MODELS.NANO)}
-                                            className={\`py-4 px-4 text-left transition-colors relative border-r-2 border-black \${
+                                            className={`py-4 px-4 text-left transition-colors relative border-r-2 border-black ${
                                                 model === MODELS.NANO ? 'bg-black text-white' : 'bg-white text-black hover:bg-zinc-100'
-                                            }\`}
+                                            }`}
                                         >
                                             <div className="text-sm font-bold">Nano (Flash)</div>
-                                            <div className={\`text-[10px] mt-1 font-medium \${model === MODELS.NANO ? 'text-zinc-400' : 'text-zinc-500'}\`}>
+                                            <div className={`text-[10px] mt-1 font-medium ${model === MODELS.NANO ? 'text-zinc-400' : 'text-zinc-500'}`}>
                                                 极速 / 基础画质
                                             </div>
                                         </button>
                                         <button
                                             onClick={() => setModel(MODELS.NANO_PRO)}
-                                            className={\`py-4 px-4 text-left transition-colors relative \${
+                                            className={`py-4 px-4 text-left transition-colors relative ${
                                                 model === MODELS.NANO_PRO ? 'bg-black text-white' : 'bg-white text-black hover:bg-zinc-100'
-                                            }\`}
+                                            }`}
                                         >
                                             <div className="text-sm font-bold">Nano Pro</div>
-                                            <div className={\`text-[10px] mt-1 font-medium \${model === MODELS.NANO_PRO ? 'text-zinc-400' : 'text-zinc-500'}\`}>
+                                            <div className={`text-[10px] mt-1 font-medium ${model === MODELS.NANO_PRO ? 'text-zinc-400' : 'text-zinc-500'}`}>
                                                 Pro / 4K / 高细节
                                             </div>
                                         </button>
@@ -424,7 +417,7 @@ const HTML_CONTENT = `
                                 </div>
 
                                 {/* Resolution Settings (Pro Only) */}
-                                <div className={\`transition-all duration-300 \${model !== MODELS.NANO_PRO ? 'opacity-30 pointer-events-none grayscale' : ''}\`}>
+                                <div className={`transition-all duration-300 ${model !== MODELS.NANO_PRO ? 'opacity-30 pointer-events-none grayscale' : ''}`}>
                                    <label className="text-xs font-bold uppercase tracking-widest mb-3 block flex items-center gap-2">
                                      <Icons.Maximize className="w-3 h-3" /> 分辨率 (仅 Pro 模型)
                                    </label>
@@ -433,11 +426,11 @@ const HTML_CONTENT = `
                                        <button
                                          key={size}
                                          onClick={() => setImageSize(size)}
-                                         className={\`flex-1 py-3 text-sm font-bold transition-colors \${
+                                         className={`flex-1 py-3 text-sm font-bold transition-colors ${
                                            imageSize === size && model === MODELS.NANO_PRO
                                            ? 'bg-black text-white'
                                            : 'bg-white text-black hover:bg-zinc-100'
-                                         }\`}
+                                         }`}
                                        >
                                          {size}
                                        </button>
@@ -453,11 +446,11 @@ const HTML_CONTENT = `
                                        <button
                                          key={ratio}
                                          onClick={() => setAspectRatio(ratio)}
-                                         className={\`py-2 text-xs font-bold border-2 transition-all \${
+                                         className={`py-2 text-xs font-bold border-2 transition-all ${
                                            aspectRatio === ratio
                                            ? 'bg-black text-white border-black'
                                            : 'bg-white text-black border-zinc-200 hover:border-black'
-                                         }\`}
+                                         }`}
                                        >
                                          {ratio}
                                        </button>
@@ -539,9 +532,9 @@ const HTML_CONTENT = `
                                 <button
                                   onClick={handleGenerate}
                                   disabled={loading}
-                                  className={\`w-full py-4 font-black text-sm uppercase tracking-widest flex items-center justify-center gap-2 transition-all border-2 border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none \${
+                                  className={`w-full py-4 font-black text-sm uppercase tracking-widest flex items-center justify-center gap-2 transition-all border-2 border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none ${
                                     loading ? 'bg-zinc-100 text-zinc-400 cursor-not-allowed shadow-none border-zinc-200 translate-x-[2px] translate-y-[2px]' : 'bg-black text-white hover:bg-zinc-800'
-                                  }\`}
+                                  }`}
                                 >
                                   {loading ? (
                                     <>
@@ -629,4 +622,3 @@ const HTML_CONTENT = `
     </script>
 </body>
 </html>
-`;

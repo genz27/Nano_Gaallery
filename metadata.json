@@ -1,0 +1,5 @@
+{
+  "name": "Gemini 极简绘图 (Nano/Pro)",
+  "description": "基于 Gemini Nano 和 Nano Pro (Pro Image) 模型的极简黑白风格绘图应用。支持文生图、图生图、以及 1K/2K/4K 分辨率设置。",
+  "requestFramePermissions": []
+}
